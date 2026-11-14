@@ -373,9 +373,21 @@ const fxConfigurationServersKey = (
   return legacy ? "mcp" : "mcpServers";
 };
 
+/**
+ * Hint for OpenCode config shape. V1 keeps servers directly under `mcp`,
+ * V2 nests them under `mcp.servers`. The hint is needed because an empty
+ * config carries no structural evidence to infer from.
+ */
+export type OpenCodeDialect = "v1" | "v2";
+
+export interface ParseClientConfigurationOptions {
+  readonly opencodeDialect?: OpenCodeDialect;
+}
+
 export const parseClientConfiguration = (
   text: string,
   format: ClientConfigurationFormat | undefined,
+  options: ParseClientConfigurationOptions = {},
 ): ClientConfigurationDocument => {
   if (format === undefined || format === "unsupported")
     throw new TypeError("client does not have a supported MCP config format");
@@ -454,15 +466,20 @@ export const parseClientConfiguration = (
     };
   }
   const native = servers.servers;
+  // An explicit hint wins over structural guessing: an empty or minimal
+  // config has no evidence, and guessing V1 there writes a table the V2
+  // client never reads. Structural detection stays for callers without a hint.
+  const hintedV2 = format === "opencode" && options.opencodeDialect === "v2";
   // A V1 server named `servers` has a string `type` discriminator; the V2
   // table may instead hold a server object named `type`.
   if (
-    format !== "opencode" ||
-    native === undefined ||
-    (typeof native === "object" &&
-      native !== null &&
-      "type" in native &&
-      typeof native.type === "string")
+    !hintedV2 &&
+    (format !== "opencode" ||
+      native === undefined ||
+      (typeof native === "object" &&
+        native !== null &&
+        "type" in native &&
+        typeof native.type === "string"))
   )
     return {
       document,
@@ -475,7 +492,10 @@ export const parseClientConfiguration = (
     };
   return {
     document,
-    servers: requireObject(native, `"${serversKey}.servers"`),
+    servers:
+      native === undefined
+        ? {}
+        : requireObject(native, `"${serversKey}.servers"`),
     serversPath: [serversKey, "servers"],
     dialect: "opencode_v2",
     environmentKey,

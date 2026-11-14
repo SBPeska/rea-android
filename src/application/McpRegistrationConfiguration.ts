@@ -18,6 +18,7 @@ import {
   readConfigurationFile,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { detectOpenCodeDialect } from "./OpenCodeDialectDetect.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
@@ -43,9 +44,19 @@ export const prepareRegistration = async (
     throw new ConfigurationError(
       "An empty client configuration could not be serialized.",
     );
+  // Для OpenCode форма конфига определяется версией клиента, а не догадкой
+  // по содержимому: пустой файл не даёт признаков, и сервер записывался
+  // в раскладку V1, которую V2-клиент не читает.
+  const detectedDialect =
+    client.format === "opencode" ? detectOpenCodeDialect() : undefined;
+  // При exactOptionalPropertyTypes нельзя передавать явный undefined,
+  // поэтому поле попадает в объект только когда версия определена.
+  const dialectHint =
+    detectedDialect === undefined ? {} : { opencodeDialect: detectedDialect };
   const target = parseClientConfiguration(
     original ?? empty.value,
     client.format,
+    dialectHint,
   );
   const layers = await readRegistrationLayers(client, target);
   const parsed = clientConfigurationForWrite(target, layers);
