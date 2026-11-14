@@ -1,11 +1,18 @@
 import { satisfies } from "semver";
 
-/** Supported runtime range, kept in sync with the published package engines. */
-export const SUPPORTED_NODE_VERSION_RANGE = "^22.23.4 || ^24.22.1 || >=26.12.1";
+/**
+ * Supported runtime range.
+ *
+ * Upstream pins exact patch floors (^22.23.4 || ^24.22.1 || >=26.12.1) because
+ * those are the versions CI verifies. Termux ships its own Node builds whose
+ * patch numbers lag behind — 24.17.0 on Android at the time of writing — so the
+ * strict floor rejects a runtime that works. The Android fork widens the minor
+ * floor to >=22.18.0 while keeping the same major families.
+ */
+export const SUPPORTED_NODE_VERSION_RANGE = ">=22.18.0 <27";
 
 /** Human-readable form of {@link SUPPORTED_NODE_VERSION_RANGE} for remediation. */
-export const SUPPORTED_NODE_VERSION_PROSE =
-  "Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+";
+export const SUPPORTED_NODE_VERSION_PROSE = "Node.js 22.18.0 or newer (< 27)";
 
 /** Return whether a Node.js version satisfies REA's tested runtime families. */
 export const supportsNodeVersion = (version: string): boolean =>
