@@ -81,50 +81,116 @@ if (!existsSync(gypPath)) {
   fail("node_modules/node-pty/binding.gyp не найден. Запустите npm install.");
 }
 
-// android_ndk_path живёт в common.gypi из заголовков Node, а не в binding.gyp.
-// Патчить файл в кэше node-gyp — плохая идея: он перекачивается при смене версии.
-// Правильный путь — передать переменную флагом -D на этапе configure.
+// ── Патч common.gypi в кэше node-gyp ────────────────────────────────
+// Переменная android_ndk_path читается из common.gypi в заголовках Node.
+// Флаг -D до неё не доходит: node-gyp передаёт его в configure, но
+// переменная раскрывается раньше, при загрузке зависимостей binding.gyp.
+// Правильное место — сам файл заголовков.
 const NDK_PLACEHOLDER = "/nonexistent-android-ndk";
 
 /**
  * Путь к node-gyp, встроенному в npm.
- * npx node-gyp скачивает пакет заново и ждёт подтверждения «Ok to proceed?» —
- * это ломает неинтерактивную установку. Берём тот, что уже есть.
+ * npx node-gyp скачивает пакет заново и ждёт «Ok to proceed?» —
+ * это ломает неинтерактивную установку.
  */
 const resolveNodeGyp = () => {
-  // 1. Локальный в проекте (если поставлен как зависимость)
   const local = join(process.cwd(), "node_modules", ".bin", "node-gyp");
   if (existsSync(local)) return { cmd: local, args: [] };
 
-  // 2. Встроенный в npm: <npm-root>/node_modules/node-gyp/bin/node-gyp.js
   try {
     const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
     const bundled = join(npmRoot, "npm", "node_modules", "node-gyp", "bin", "node-gyp.js");
     if (existsSync(bundled)) return { cmd: process.execPath, args: [bundled] };
   } catch {
-    /* npm root недоступен — упадём ниже */
+    /* npm root недоступен */
   }
 
-  // 3. Последняя попытка: node-gyp из PATH
   return { cmd: "node-gyp", args: [] };
 };
 
 const gypRunner = resolveNodeGyp();
 
+const findCommonGypi = () => {
+  const cacheRoot = join(process.env.HOME || "/root", ".cache", "node-gyp");
+  if (!existsSync(cacheRoot)) return null;
+  // Каталог кэша называется по версии Node: 24.17.0
+  const version = process.versions.node;
+  const direct = join(cacheRoot, version, "include", "node", "common.gypi");
+  if (existsSync(direct)) return direct;
+  // На всякий случай — ищем любой common.gypi
+  try {
+    const found = execFileSync("sh", ["-c", `find "${cacheRoot}" -name common.gypi 2>/dev/null | head -1`], {
+      encoding: "utf8",
+    }).trim();
+    return found || null;
+  } catch {
+    return null;
+  }
+};
+
+process.stdout.write("  патчу заголовки Node (common.gypi)…\n");
+const commonGypi = findCommonGypi();
+// Оригинал снимаем ДО патча — иначе откат вернёт пропатченную версию.
+let commonBackup = null;
+if (commonGypi && existsSync(commonGypi)) {
+  commonBackup = readFileSync(commonGypi, "utf8");
+}
+if (!commonGypi) {
+  process.stderr.write(
+    "  ⚠ common.gypi не найден в кэше node-gyp.\n" +
+      "    Сначала запустите configure один раз, чтобы заголовки скачались:\n" +
+      "    cd node_modules/node-pty && npx node-gyp configure\n",
+  );
+} else {
+  let cg = readFileSync(commonGypi, "utf8");
+  if (cg.includes("android_ndk_path%")) {
+    process.stdout.write(`  ✓ уже пропатчен: ${commonGypi}\n`);
+  } else {
+    const anchor = "  'variables': {";
+    if (!cg.includes(anchor)) {
+      process.stderr.write(`  ⚠ нестандартный common.gypi, пропускаю: ${commonGypi}\n`);
+    } else {
+      cg = cg.replace(
+        anchor,
+        `${anchor}\n    # Termux: NDK не нужен, собираем против bionic из состава ОС.\n    'android_ndk_path%': '${NDK_PLACEHOLDER}',`,
+      );
+      writeFileSync(commonGypi, cg, "utf8");
+      process.stdout.write(`  ✓ пропатчен: ${commonGypi}\n`);
+    }
+  }
+}
+
 process.stdout.write("  компилирую (2–5 минут на телефоне)…\n");
+
 try {
-  // configure отдельно — именно здесь разрешаются переменные gyp
-  run(gypRunner.cmd, [...gypRunner.args, "configure", `-Dandroid_ndk_path=${NDK_PLACEHOLDER}`], {
-    cwd: ptyDir,
-  });
+  run(gypRunner.cmd, [...gypRunner.args, "configure"], { cwd: ptyDir });
   run(gypRunner.cmd, [...gypRunner.args, "build"], { cwd: ptyDir });
   process.stdout.write("  ✓ node-pty собран\n");
-} catch {
+} catch (err) {
+  // Показываем реальную причину, а не общую фразу.
+  const detail =
+    err?.stderr?.toString?.()?.trim() ||
+    err?.stdout?.toString?.()?.trim() ||
+    err?.message ||
+    "причина неизвестна";
+  process.stderr.write(`\n  причина: ${String(detail).split("\n").slice(-6).join("\n  ")}\n`);
   fail(
     "node-pty не собрался.\n" +
+      `  команда: ${gypRunner.cmd} ${gypRunner.args.join(" ")}\n` +
       "  Проверьте: pkg install clang make python libutil\n" +
-      "  Лог: node_modules/node-pty/build/Release/obj.target\n",
+      "  Полный лог: node_modules/node-pty/build/Release/obj.target\n",
   );
+} finally {
+  // Возвращаем common.gypi в исходное состояние: патч был нужен
+  // только для этой сборки.
+  if (commonBackup !== null && commonGypi) {
+    try {
+      writeFileSync(commonGypi, commonBackup, "utf8");
+      process.stdout.write("  заголовки Node восстановлены\n");
+    } catch {
+      process.stderr.write("  ⚠ не удалось откатить common.gypi\n");
+    }
+  }
 }
 
 // ── 5. Проверка, что PTY грузится ───────────────────────────────────
