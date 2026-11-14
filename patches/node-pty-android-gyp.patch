@@ -1,0 +1,21 @@
+Термукс: сборка node-pty под bionic.
+
+Проблема
+--------
+Node headers содержат common.gypi, где для OS=="android" есть ветка:
+
+    ['OS == "android"', {
+      'cflags': [ '-fPIC', '-I<(android_ndk_path)/sources/android/cpufeatures' ],
+      'ldflags': [ '-fPIC' ]
+    }],
+
+Переменная android_ndk_path приходит из NDK-сборки Node. В Termux её нет,
+и gyp падает с «Undefined variable android_ndk_path in binding.gyp» ещё
+до компиляции.
+
+Решение
+-------
+Определяем переменную в variables-binding.gypi, который подключается
+до common.gypi. Путь указывает на несуществующую папку NDK — это нормально:
+Termux использует bionic из состава ОС, cpufeatures из NDK не нужен.
+Компилятор получит -I на несуществующую директорию, что безвредно.
