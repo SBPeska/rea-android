@@ -34,7 +34,7 @@ const fail = (msg) => {
 };
 
 // ── 1. Окружение ────────────────────────────────────────────────────
-process.stdout.write("\n[1/5] Проверка окружения\n");
+process.stdout.write("\n[1/6] Проверка окружения\n");
 if (platform() !== "android") {
   process.stderr.write("  ⚠ Не Android. Скрипт рассчитан на Termux.\n");
 }
@@ -44,7 +44,7 @@ if (!process.env.PREFIX?.includes("com.termux")) {
 process.stdout.write(`  node: ${process.versions.node}  arch: ${process.arch}\n`);
 
 // ── 2. Инструменты сборки ───────────────────────────────────────────
-process.stdout.write("\n[2/5] Инструменты сборки\n");
+process.stdout.write("\n[2/6] Инструменты сборки\n");
 const need = ["clang", "make", "python"];
 const missing = need.filter((t) => !has(t));
 const inTermux = Boolean(process.env.PREFIX?.includes("com.termux"));
@@ -65,7 +65,7 @@ if (missing.length === 0) {
 }
 
 // ── 3. Зависимости проекта ──────────────────────────────────────────
-process.stdout.write("\n[3/5] Зависимости проекта (npm ci)\n");
+process.stdout.write("\n[3/6] Зависимости проекта (npm ci)\n");
 if (!existsSync("node_modules") || !existsSync("node_modules/node-pty")) {
   run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"]);
 } else {
@@ -73,7 +73,7 @@ if (!existsSync("node_modules") || !existsSync("node_modules/node-pty")) {
 }
 
 // ── 4. Патч binding.gyp и сборка node-pty ───────────────────────────
-process.stdout.write("\n[4/5] Сборка node-pty под bionic\n");
+process.stdout.write("\n[4/6] Сборка node-pty под bionic\n");
 const ptyDir = join(process.cwd(), "node_modules", "node-pty");
 const gypPath = join(ptyDir, "binding.gyp");
 
@@ -194,7 +194,7 @@ try {
 }
 
 // ── 5. Проверка, что PTY грузится ───────────────────────────────────
-process.stdout.write("\n[5/5] Проверка PTY\n");
+process.stdout.write("\n[5/6] Проверка PTY\n");
 try {
   const out = execFileSync(
     process.execPath,
@@ -233,9 +233,34 @@ try {
   process.exitCode = 1;
 }
 
+// ── Сборка dist ─────────────────────────────────────────────────────
+// Без dist команда `rea` падает с «compiled runtime is missing».
+// На телефоне используем build:termux — он берёт typescript-termux
+// и не тянет turbo, который на Android работает нестабильно.
+process.stdout.write("\n[6/6] Сборка runtime (dist)\n");
+const distPath = join(process.cwd(), "dist");
+if (existsSync(distPath) && existsSync(join(distPath, "index.js"))) {
+  process.stdout.write("  dist уже собран\n");
+} else {
+  process.stdout.write(
+    "  компилирую TypeScript (10–25 минут на телефоне, это нормально)…\n",
+  );
+  try {
+    run("npm", ["run", "compile:termux"]);
+    process.stdout.write("  ✓ dist собран\n");
+  } catch {
+    fail(
+      "Сборка dist не прошла.\n" +
+        "  Попробуйте вручную:\n" +
+        "    npm run compile:termux\n" +
+        "  Если не хватает памяти — закройте приложения и повторите.\n",
+    );
+  }
+}
+
 // ── Итог ────────────────────────────────────────────────────────────
 process.stdout.write(
   "\n✓ Установка завершена.\n" +
-    "  Дальше:  npx rea-agents setup\n" +
+    "  Запуск:   npx rea-agents setup\n" +
     "  Проверка: npm run termux:check\n\n",
 );
