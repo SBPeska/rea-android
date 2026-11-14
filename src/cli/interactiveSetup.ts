@@ -143,8 +143,14 @@ const selectSetupActions = async (
   context: SetupConfirmationContext,
   signal?: AbortSignal,
 ): Promise<readonly string[] | undefined> => {
+  // Android/Termux: единственный практичный агент — OpenCode (protonomk).
+  // Остальные 17 клиентов — десктопные приложения, которых на телефоне нет.
+  // Показывать их значит предлагать конфиги в несуществующие пути.
+  const androidOnly = process.platform === "android";
   const clientStates = context.clientStates.filter(
-    ({ client }) => client.format !== "unsupported",
+    ({ client }) =>
+      client.format !== "unsupported" &&
+      (!androidOnly || client.name === "opencode"),
   );
   const initial = new Set(context.selectedClientIds);
   const selectedClientIds = accessible
