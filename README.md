@@ -49,6 +49,23 @@ Android использует **bionic**, а не glibc. Бинарник не з
 Всё остальное — код upstream без изменений. API `node-pty` совместим с `@lydell/node-pty`,
 тип `IPty` тот же, поэтому правки в бизнес-логике не потребовались.
 
+## Известные грабли
+
+Собрано по результатам первого запуска на реальном устройстве.
+
+**`gyp: Undefined variable android_ndk_path`.** Node headers содержат
+`common.gypi`, где для `OS=="android"` требуется переменная из NDK-сборки
+Node. В Termux её нет, gyp падает до компиляции. `termux:install` подставляет
+значение в `binding.gyp` автоматически — если увидели эту ошибку, значит
+скрипт не отработал, запустите его заново.
+
+**`npm warn Unknown cli config --build-from-source`.** Безвредно, но
+говорит о том, что используется другая версия npm. Скрипт больше не полагается
+на этот флаг, а вызывает `node-gyp rebuild` напрямую.
+
+**`Cannot find package 'node-pty'` в `termux:check`.** Значит сборка
+не дошла до конца. Смотрите шаг `[4/5]` в выводе `termux:install`.
+
 ## Требования
 
 - Android 7+, **arm64** (проверить: `uname -m` → `aarch64`)
@@ -61,7 +78,7 @@ Android использует **bionic**, а не glibc. Бинарник не з
 ```bash
 # 1. Termux с F-Droid, затем:
 pkg update -y && pkg upgrade -y
-pkg install git nodejs-lts clang make python -y
+pkg install git nodejs-lts clang make python libutil -y
 
 # 2. Клонируем
 git clone https://github.com/Zibin2004/rea-android
