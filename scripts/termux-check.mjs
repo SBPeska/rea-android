@@ -70,13 +70,28 @@ try {
 } catch (e) {
   no("node-pty не работает");
   const msg = String(e.stderr || e.message || "");
-  if (/NODE_MODULE_VERSION|different Node/i.test(msg))
-    process.stdout.write("     → пересоберите: npm rebuild node-pty\n");
-  else if (/GLIBC/i.test(msg))
-    process.stdout.write("     → собран под glibc; нужен: npm install --build-from-source node-pty\n");
+  // Разбираем причину по тексту ошибки и даём конкретную команду.
+  if (/NODE_MODULE_VERSION|different Node|compiled against/i.test(msg))
+    process.stdout.write(
+      "     → модуль собран под другую версию Node\n" +
+        "       пересоберите: npm run termux:install\n",
+    );
+  else if (/GLIBC|version `GLIBC/i.test(msg))
+    process.stdout.write(
+      "     → собран под glibc, а Android использует bionic\n" +
+        "       нужна сборка из исходников: npm run termux:install\n",
+    );
+  else if (/Failed to load native module|Cannot find module.*pty\.node/i.test(msg))
+    process.stdout.write(
+      "     → pty.node не собран\n" +
+        "       запустите: npm run termux:install\n" +
+        "       если падает на gyp — пришлите вывод шага [4/5]\n",
+    );
   else if (/cannot open shared object/i.test(msg))
-    process.stdout.write("     → не хватает libutil: pkg install libutil\n");
-  else process.stdout.write(`     → ${msg.split("\n")[0].slice(0, 120)}\n`);
+    process.stdout.write("     → не хватает системной библиотеки: pkg install libutil\n");
+  else if (/EACCES|Permission denied/i.test(msg))
+    process.stdout.write("     → нет прав на исполнение: chmod +x node_modules/node-pty/build/Release/pty.node\n");
+  else process.stdout.write(`     → ${msg.split("\n")[0].slice(0, 140)}\n`);
 }
 
 // ── Системные инструменты ───────────────────────────────────────────

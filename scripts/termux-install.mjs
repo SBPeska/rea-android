@@ -47,11 +47,21 @@ process.stdout.write(`  node: ${process.versions.node}  arch: ${process.arch}\n`
 process.stdout.write("\n[2/5] Инструменты сборки\n");
 const need = ["clang", "make", "python"];
 const missing = need.filter((t) => !has(t));
-if (missing.length > 0) {
-  process.stdout.write(`  ставлю: ${missing.join(", ")}\n`);
+const inTermux = Boolean(process.env.PREFIX?.includes("com.termux"));
+
+if (missing.length === 0) {
+  process.stdout.write("  clang, make, python — на месте\n");
+} else if (inTermux && has("pkg")) {
+  process.stdout.write(`  ставлю через pkg: ${missing.join(", ")}\n`);
   run("pkg", ["install", "-y", "clang", "make", "python", "libutil"]);
 } else {
-  process.stdout.write("  clang, make, python — на месте\n");
+  // Не Termux и не хватает инструментов — подсказываем, но не падаем:
+  // на CI/GitHub Actions компилятор обычно уже есть.
+  process.stderr.write(
+    `  ⚠ нет: ${missing.join(", ")}\n` +
+      "    в Termux: pkg install clang make python libutil\n" +
+      "    в Debian/Ubuntu: apt install build-essential python3\n",
+  );
 }
 
 // ── 3. Зависимости проекта ──────────────────────────────────────────
@@ -71,31 +81,43 @@ if (!existsSync(gypPath)) {
   fail("node_modules/node-pty/binding.gyp не найден. Запустите npm install.");
 }
 
-let gyp = readFileSync(gypPath, "utf8");
+// android_ndk_path живёт в common.gypi из заголовков Node, а не в binding.gyp.
+// Патчить файл в кэше node-gyp — плохая идея: он перекачивается при смене версии.
+// Правильный путь — передать переменную флагом -D на этапе configure.
+const NDK_PLACEHOLDER = "/nonexistent-android-ndk";
 
-// Подставляем android_ndk_path, если его ещё нет
-if (!gyp.includes("android_ndk_path%")) {
-  const variablesBlock = `{
-  'variables': {
-    # Termux: NDK не нужен, собираем против bionic из состава ОС.
-    # Значение должно быть непустым, иначе gyp падает на common.gypi.
-    'android_ndk_path%': '/nonexistent-android-ndk',
-  },
-`;
-  // Заменяем первый '{' в начале файла на блок с variables
-  gyp = gyp.replace(/^\s*\{/, variablesBlock);
-  writeFileSync(gypPath, gyp, "utf8");
-  process.stdout.write("  ✓ binding.gyp пропатчен (android_ndk_path)\n");
-} else {
-  process.stdout.write("  ✓ binding.gyp уже пропатчен\n");
-}
+/**
+ * Путь к node-gyp, встроенному в npm.
+ * npx node-gyp скачивает пакет заново и ждёт подтверждения «Ok to proceed?» —
+ * это ломает неинтерактивную установку. Берём тот, что уже есть.
+ */
+const resolveNodeGyp = () => {
+  // 1. Локальный в проекте (если поставлен как зависимость)
+  const local = join(process.cwd(), "node_modules", ".bin", "node-gyp");
+  if (existsSync(local)) return { cmd: local, args: [] };
+
+  // 2. Встроенный в npm: <npm-root>/node_modules/node-gyp/bin/node-gyp.js
+  try {
+    const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    const bundled = join(npmRoot, "npm", "node_modules", "node-gyp", "bin", "node-gyp.js");
+    if (existsSync(bundled)) return { cmd: process.execPath, args: [bundled] };
+  } catch {
+    /* npm root недоступен — упадём ниже */
+  }
+
+  // 3. Последняя попытка: node-gyp из PATH
+  return { cmd: "node-gyp", args: [] };
+};
+
+const gypRunner = resolveNodeGyp();
 
 process.stdout.write("  компилирую (2–5 минут на телефоне)…\n");
 try {
-  run("npx", ["node-gyp", "rebuild"], {
+  // configure отдельно — именно здесь разрешаются переменные gyp
+  run(gypRunner.cmd, [...gypRunner.args, "configure", `-Dandroid_ndk_path=${NDK_PLACEHOLDER}`], {
     cwd: ptyDir,
-    env: { ...process.env, npm_config_build_from_source: "true" },
   });
+  run(gypRunner.cmd, [...gypRunner.args, "build"], { cwd: ptyDir });
   process.stdout.write("  ✓ node-pty собран\n");
 } catch {
   fail(
